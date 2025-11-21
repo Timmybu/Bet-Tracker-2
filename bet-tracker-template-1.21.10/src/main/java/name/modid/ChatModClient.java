@@ -13,6 +13,7 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.AbstractWidget; // Import AbstractWidget
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.ChatScreen;
@@ -58,6 +59,9 @@ public class ChatModClient implements ClientModInitializer {
     private static PaymentEntry entryToEdit = null;
     private static EditBox multiplierInput;
 
+    // Track active widgets so we can re-render them on top of our background
+    private static final List<AbstractWidget> activeWidgets = new ArrayList<>();
+
     @Override
     public void onInitializeClient() {
         System.out.println("[ChatMod] Initialized");
@@ -66,11 +70,11 @@ public class ChatModClient implements ClientModInitializer {
                 "key.chatmod.toggle_hud", -1, KeyMapping.Category.MISC
         ));
 
-        // 1. HUD RENDERER
+        // 1. HUD RENDERER (Passive Mode)
         HudRenderCallback.EVENT.register((context, tickDelta) -> {
             if (!isHudVisible) return;
             if (Minecraft.getInstance().screen == null) {
-                renderHudWindow(context, false);
+                renderHudWindow(context, false, 0, 0, 0f);
             }
         });
 
@@ -81,7 +85,7 @@ public class ChatModClient implements ClientModInitializer {
 
                 ScreenEvents.afterRender(screen).register((s, context, mouseX, mouseY, delta) -> {
                     if (isHudVisible) {
-                        renderHudWindow(context, true);
+                        renderHudWindow(context, true, mouseX, mouseY, delta);
                         handleDragLogic(mouseX, mouseY);
                     }
                 });
@@ -115,6 +119,8 @@ public class ChatModClient implements ClientModInitializer {
 
     private void initChatScreenWidgets(Screen screen) {
         isDragging = false;
+        activeWidgets.clear(); // Clear tracking list
+
         int windowWidth = 200;
         int x = windowX;
         int y = windowY;
@@ -123,17 +129,20 @@ public class ChatModClient implements ClientModInitializer {
             multiplierInput = new EditBox(Minecraft.getInstance().font, x + 10, y + 35, 180, 20, Component.literal("Multiplier"));
             multiplierInput.setValue("2.0");
             Screens.getButtons(screen).add(multiplierInput);
+            activeWidgets.add(multiplierInput);
 
             Button confirm = Button.builder(Component.literal("Confirm"), btn -> {
                 applyMultiplier(screen);
             }).bounds(x + 10, y + 60, 85, 20).build();
             Screens.getButtons(screen).add(confirm);
+            activeWidgets.add(confirm);
 
             Button cancel = Button.builder(Component.literal("Cancel"), btn -> {
                 entryToEdit = null;
                 screen.init(Minecraft.getInstance(), screen.width, screen.height);
             }).bounds(x + 105, y + 60, 85, 20).build();
             Screens.getButtons(screen).add(cancel);
+            activeWidgets.add(cancel);
             return;
         }
 
@@ -154,6 +163,7 @@ public class ChatModClient implements ClientModInitializer {
             moveBtn.setY(windowY + 2);
         });
         Screens.getButtons(screen).add(moveBtn);
+        activeWidgets.add(moveBtn);
 
         Button clearBtn = Button.builder(Component.literal("Clear"), btn -> {
             paymentHistory.clear();
@@ -165,6 +175,7 @@ public class ChatModClient implements ClientModInitializer {
             clearBtn.setY(windowY + 2);
         });
         Screens.getButtons(screen).add(clearBtn);
+        activeWidgets.add(clearBtn);
 
         int yOffset = 25;
         for (PaymentEntry entry : paymentHistory) {
@@ -180,6 +191,7 @@ public class ChatModClient implements ClientModInitializer {
                 xBtn.setY(windowY + finalYOffset - 2);
             });
             Screens.getButtons(screen).add(xBtn);
+            activeWidgets.add(xBtn);
 
             Button winBtn = Button.builder(Component.literal("Win"), btn -> {
                 entryToEdit = entry;
@@ -191,6 +203,7 @@ public class ChatModClient implements ClientModInitializer {
                 winBtn.setY(windowY + finalYOffset - 2);
             });
             Screens.getButtons(screen).add(winBtn);
+            activeWidgets.add(winBtn);
 
             yOffset += 15;
         }
@@ -203,12 +216,13 @@ public class ChatModClient implements ClientModInitializer {
         }
     }
 
-    private void renderHudWindow(GuiGraphics context, boolean editing) {
+    private void renderHudWindow(GuiGraphics context, boolean editing, int mouseX, int mouseY, float delta) {
         int windowWidth = 200;
         int contentHeight = (editing && entryToEdit != null) ? 90 : Math.max(20, paymentHistory.size() * 15);
         int totalHeight = 25 + contentHeight + 5;
 
         if (editing) {
+            // 1. Draw Background
             context.fill(windowX, windowY, windowX + windowWidth, windowY + totalHeight, 0xE0000000);
             context.fill(windowX, windowY, windowX + windowWidth, windowY + 20, isDragging ? 0xFF00AA00 : 0xFF404040);
 
@@ -220,11 +234,18 @@ public class ChatModClient implements ClientModInitializer {
 
             String title = (entryToEdit != null) ? "Edit Multiplier" : "History";
             context.drawCenteredString(Minecraft.getInstance().font, title, windowX + windowWidth / 2, windowY + 6, 0xFFFFFFFF);
+
+            // 2. FIX: Re-render buttons ON TOP of the background box
+            for (AbstractWidget widget : activeWidgets) {
+                widget.render(context, mouseX, mouseY, delta);
+            }
+
         } else {
             context.fill(windowX, windowY, windowX + windowWidth, windowY + totalHeight, 0x50000000);
             context.drawString(Minecraft.getInstance().font, "Payment History:", windowX + 5, windowY + 5, 0xFFAAAAAA);
         }
 
+        // Content Text
         if (editing && entryToEdit != null) {
             context.drawString(Minecraft.getInstance().font, "Multiplier:", windowX + 10, windowY + 25, 0xFFAAAAAA);
         } else {
@@ -246,7 +267,6 @@ public class ChatModClient implements ClientModInitializer {
         try {
             String rawInput = multiplierInput.getValue().trim().toLowerCase();
 
-            // Separate number and suffix
             String numberPart = rawInput;
             String suffix = "";
 
@@ -258,29 +278,19 @@ public class ChatModClient implements ClientModInitializer {
                 }
             }
 
-            // Parse the number
             double multiplier = Double.parseDouble(numberPart);
 
-            // Note: We do NOT multiply the value by 1000 here anymore.
-            // We just multiply the base number.
-
-            // Parse old amount (remove symbols)
             String cleanAmount = entryToEdit.amount.replace("$", "").replace(",", "");
             double oldAmount = Double.parseDouble(cleanAmount);
-
-            // Calculate new numeric value
             double newAmount = oldAmount * multiplier;
 
-            // Format result back to string
             String formatted = String.format("%.2f", newAmount);
             if (formatted.endsWith(".00")) formatted = formatted.substring(0, formatted.length() - 3);
 
-            // Append the suffix back if it existed
             if (!suffix.isEmpty()) {
                 formatted += suffix;
             }
 
-            // Update entry and command
             entryToEdit.amount = formatted;
             String command = "/pay " + entryToEdit.player + " " + formatted;
 
