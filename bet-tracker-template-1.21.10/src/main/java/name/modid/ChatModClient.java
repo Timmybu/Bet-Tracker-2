@@ -265,32 +265,21 @@ public class ChatModClient implements ClientModInitializer {
         if (entryToEdit == null) return;
 
         try {
-            String rawInput = multiplierInput.getValue().trim().toLowerCase();
+            // 1. Parse the Multiplier (e.g., "2", "2k", "0.5")
+            // This handles inputs like "10m" correctly by converting them to their full value (10,000,000)
+            double multiplierVal = parseCurrency(multiplierInput.getValue());
 
-            String numberPart = rawInput;
-            String suffix = "";
+            // 2. Parse the Existing Amount (e.g., "$100", "100m")
+            // This FIXES the crash by stripping 'm'/'k' before parsing
+            double oldAmountVal = parseCurrency(entryToEdit.amount);
 
-            if (!rawInput.isEmpty()) {
-                char lastChar = rawInput.charAt(rawInput.length() - 1);
-                if (lastChar == 'k' || lastChar == 'm' || lastChar == 'b') {
-                    suffix = String.valueOf(lastChar);
-                    numberPart = rawInput.substring(0, rawInput.length() - 1).trim();
-                }
-            }
+            // 3. Calculate New Amount
+            double newAmountVal = oldAmountVal * multiplierVal;
 
-            double multiplier = Double.parseDouble(numberPart);
+            // 4. Format the result back to a string (e.g., "200m")
+            String formatted = formatCurrency(newAmountVal);
 
-            String cleanAmount = entryToEdit.amount.replace("$", "").replace(",", "");
-            double oldAmount = Double.parseDouble(cleanAmount);
-            double newAmount = oldAmount * multiplier;
-
-            String formatted = String.format("%.2f", newAmount);
-            if (formatted.endsWith(".00")) formatted = formatted.substring(0, formatted.length() - 3);
-
-            if (!suffix.isEmpty()) {
-                formatted += suffix;
-            }
-
+            // 5. Update and Send
             entryToEdit.amount = formatted;
             String command = "/pay " + entryToEdit.player + " " + formatted;
 
@@ -302,9 +291,51 @@ public class ChatModClient implements ClientModInitializer {
 
         } catch (Exception e) {
             System.out.println("[ChatMod] Error applying multiplier: " + e.getMessage());
+            e.printStackTrace();
         }
     }
+    /**
+     * Parses a string like "10k", "5.5m", "$100" into a double value.
+     */
+    private double parseCurrency(String input) {
+        if (input == null || input.isEmpty()) return 0.0;
 
+        String clean = input.trim().toLowerCase().replace("$", "").replace(",", "");
+        double multiplier = 1.0;
+
+        if (clean.endsWith("k")) {
+            multiplier = 1_000.0;
+            clean = clean.substring(0, clean.length() - 1);
+        } else if (clean.endsWith("m")) {
+            multiplier = 1_000_000.0;
+            clean = clean.substring(0, clean.length() - 1);
+        } else if (clean.endsWith("b")) {
+            multiplier = 1_000_000_000.0;
+            clean = clean.substring(0, clean.length() - 1);
+        }
+
+        try {
+            return Double.parseDouble(clean) * multiplier;
+        } catch (NumberFormatException e) {
+            System.out.println("[ChatMod] Failed to parse number: " + input);
+            return 0.0;
+        }
+    }
+    /**
+     * Formats a double value back into a string with suffixes (k, m, b).
+     * e.g. 2000000 -> "2m", 1500 -> "1.5k"
+     */
+    private String formatCurrency(double value) {
+        if (value >= 1_000_000_000) {
+            return String.format("%.2fb", value / 1_000_000_000).replace(".00", "");
+        } else if (value >= 1_000_000) {
+            return String.format("%.2fm", value / 1_000_000).replace(".00", "");
+        } else if (value >= 1_000) {
+            return String.format("%.2fk", value / 1_000).replace(".00", "");
+        } else {
+            return String.format("%.2f", value).replace(".00", "");
+        }
+    }
     private void parseMessage(String messageContent) {
         String cleanMessage = ChatFormatting.stripFormatting(messageContent);
         Matcher matcher = PAYMENT_PATTERN.matcher(cleanMessage);
