@@ -1,0 +1,37 @@
+{
+	"schemaVersion": 1,
+	"id": "bet-tracker",
+	"version": "${version}",
+	"name": "Bet-Tracker",
+	"description": "This is an example description! Tell everyone what your mod is about!",
+	"authors": [
+		"Me!"
+	],
+	"contact": {
+		"homepage": "https://fabricmc.net/",
+		"sources": "https://github.com/FabricMC/fabric-example-mod"
+	},
+	"license": "CC0-1.0",
+	"icon": "assets/bet-tracker/icon.png",
+	"environment": "client",
+	"entrypoints": {
+      "client": [
+        "name.modid.ChatModClient"
+      ],
+		"main": [
+			"name.modid.BetTracker"
+		]
+	},
+	"mixins": [
+		"bet-tracker.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.18.1",
+		"minecraft": "~1.21.10",
+		"java": ">=21",
+		"fabric-api": "*"
+	},
+	"suggests": {
+		"another-mod": "*"
+	}
+}
